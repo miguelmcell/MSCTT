@@ -1,4 +1,4 @@
-from webull import webull
+from webull import webull, streamconn
 # cli.py
 import click
 import pickle
@@ -29,12 +29,22 @@ def bordered(text):
     res.append('└' + '─' * width + '┘')
     return '\n'.join(res)
 
+def on_price_message(topic, data):
+    print (data)
+	#the following fields will vary by topic number you recieve (topic 105 in this case)
+    print(f"Ticker: {topic['tickerId']}, Price: {data['deal']['price']}, "
+        + f"Volume: {data['deal']['volume']}, Trade time: {data['tradeTime']}")
+	#all your algo precessing code goes here
+
+def on_order_message(topic, data):
+    print(data)
+
 @click.group()
 def main():
     if os.path.exists('session.pickle'):
         try:
             sesh = pickle.load(open(SESSION_FILE,'rb'))
-            print(bordered('Current User: {}{}{}\nRefresh Token: {}\nSession Expiration Date: {}'.format(BLUE,sesh['settings']['userId'], ENDC, sesh['refreshToken'], sesh['tokenExpireTime'])))
+            print('===== {}Logged In ✓{}\n===== Current User: {}{}{}\n===== Refresh Token: {}\n===== Session Expiration Date: {}\n'.format(BOLD,GREEN,ENDC,BLUE,sesh['settings']['userId'], ENDC, sesh['refreshToken'], sesh['tokenExpireTime']))
             if 'accessToken' in sesh:
                 wb._access_token = sesh['accessToken']
                 wb._refresh_token = sesh['refreshToken']
@@ -47,7 +57,7 @@ def main():
             if os.path.exists(filename):
               os.remove(filename)
     else:
-        print(bordered('{}User is not logged in{}\nPlease run {}sendmfa{} before {}login{} to get mfa code'.format(FAIL, ENDC,BLUE, ENDC, BLUE, ENDC)))
+        print('===== {}User is not logged in{}\n===== Please run {}sendmfa{} before {}login{} to get mfa code\n'.format(FAIL, ENDC,BLUE, ENDC, BLUE, ENDC))
 
 @main.command()
 def status():
@@ -77,7 +87,7 @@ def login(email, password, mfa_code):
         print('{}Overwriting existing session with new login{}'.format(WARNING, ENDC))
     pickle.dump(login_response, open(filename, 'wb'))
     print('{}Login Successfull{}'.format(GREEN,ENDC))
-    print(bordered('Current User: {}{}{}\nRefresh Token: {}\nSession Expiration Date: {}'.format(BLUE, login_response['settings']['userId'], ENDC, login_response['refreshToken'], login_response['tokenExpireTime'])))
+    print('===== {}Logged In ✓{}\n===== Current User: {}{}{}\n===== Refresh Token: {}\n===== Session Expiration Date: {}\n'.format(BOLD,GREEN,ENDC,BLUE,login_response['settings']['userId'], ENDC, login_response['refreshToken'], login_response['tokenExpireTime']))
 
 @main.command()
 def logout():
@@ -89,12 +99,29 @@ def logout():
     if os.path.exists(filename):
       os.remove(filename)
     print('User successfully logged out')
-    print(bordered('{}User is not logged in{}\nPlease run {}sendmfa{} before {}login{} to get mfa code'.format(FAIL, ENDC,BLUE, ENDC, BLUE, ENDC)))
+    print('===== {}User is not logged in{}\n===== Please run {}sendmfa{} before {}login{} to get mfa code\n'.format(FAIL, ENDC,BLUE, ENDC, BLUE, ENDC))
 
-# @main.command()
-# def getaccountid():
-#     print('Getting Account ID:{}'.format(wb.get_account_id()))
+@main.command()
+@click.argument('ticker')
+def get_stock_price(ticker):
+    try:
+        print('Price for {}{}{}: {}\n'.format(YELLOW, ticker.upper(), ENDC, wb.get_quote(stock=ticker)['pPrice']))
+    except:
+        print('{}Ticker name {}{}{} was not found{}\n'.format(FAIL, YELLOW, ticker.upper(), RED, ENDC))
 
+@main.command()
+@click.argument('ticker')
+def stream_stock_price(ticker):
+    conn = streamconn.StreamConn(debug_flg=True)
+    conn.price_func = on_price_message
+    conn.order_func = on_order_message
+    if not wb._access_token is None and len(wb._access_token) > 1:
+        conn.connect(wb._did, access_token=wb._access_token)
+    else:
+        conn.connect(wb._did)
+    conn.subscribe(tId=wb.get_ticker(ticker))
+    conn.run_loop_once()
+    conn.run_blocking_loop()
 
 if __name__ == "__main__":
     main()
